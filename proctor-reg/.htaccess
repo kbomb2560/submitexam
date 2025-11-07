@@ -1,0 +1,22 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /proctor-reg/
+  
+  # Handle requests for existing files or directories
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  
+  # Handle requests for non-existing files or directories
+  RewriteRule ^(.*)$ index.html [L]
+  
+  # Prevent directory listing
+  Options -Indexes
+  
+  # Handle errors
+  ErrorDocument 404 /proctor-reg/index.html
+</IfModule>
+
+# Enable CORS
+<IfModule mod_headers.c>
+  Header set Access-Control-Allow-Origin "*"
+</IfModule> 
