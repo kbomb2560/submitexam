@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { BarChart3, Clock, FileDown, RefreshCcw, Search, Users } from 'lucide-react'
 import { saveAs } from 'file-saver'
 import * as XLSX from 'xlsx'
-import { calculateCountdown, composeFullName, formatThaiDateTime, getRegistrationDeadline } from '../utils/helpers.js'
+import { calculateCountdown, composeFullName, formatThaiDateTime } from '../utils/helpers.js'
 
 const cardClassName =
   'rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-indigo-200 hover:shadow-md'
@@ -28,7 +28,15 @@ function StatList({ title, items }) {
   )
 }
 
-export default function AdminDashboard({ summary, registrations = [], loading, error, onRefresh, lastUpdated }) {
+export default function AdminDashboard({
+  summary,
+  registrations = [],
+  loading,
+  error,
+  onRefresh,
+  lastUpdated,
+  registrationWindow,
+}) {
   const total = summary?.total ?? 0
 
   const topDepartment = useMemo(() => summary?.byDepartment?.[0], [summary])
@@ -36,17 +44,23 @@ export default function AdminDashboard({ summary, registrations = [], loading, e
   const topGender = useMemo(() => summary?.byGender?.[0], [summary])
   const topRole = useMemo(() => summary?.byUserRole?.[0], [summary])
 
-  const registrationDeadline = useMemo(() => getRegistrationDeadline(), [])
-  const [countdown, setCountdown] = useState(() => calculateCountdown(registrationDeadline))
+  const registrationDeadline = registrationWindow?.closesAt ?? null
+  const [countdown, setCountdown] = useState(() =>
+    registrationDeadline ? calculateCountdown(registrationDeadline) : null
+  )
   const countdownLabel = useMemo(() => {
-    if (!countdown || countdown.totalMs <= 0) {
+    if (!countdown) {
+      return registrationDeadline ? 'หมดเขตรับลงทะเบียนแล้ว' : 'ไม่พบข้อมูลกำหนดปิดรับลงทะเบียน'
+    }
+    if (countdown.totalMs <= 0) {
       return 'หมดเขตรับลงทะเบียนแล้ว'
     }
 
-    return `${countdown.days.toLocaleString('th-TH')} วัน ${countdown.hours.toString().padStart(2, '0')} ชม. ${countdown.minutes
+    const secondsText = `${(countdown.seconds ?? 0).toString().padStart(2, '0')} วินาที`
+    return `${countdown.days.toLocaleString('th-TH')} วัน ${countdown.hours
       .toString()
-      .padStart(2, '0')} นาที`
-  }, [countdown])
+      .padStart(2, '0')} ชม. ${countdown.minutes.toString().padStart(2, '0')} นาที ${secondsText}`
+  }, [countdown, registrationDeadline])
 
   const [searchTerm, setSearchTerm] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -87,6 +101,18 @@ export default function AdminDashboard({ summary, registrations = [], loading, e
   useEffect(() => {
     setCurrentPage(1)
   }, [searchTerm, enrichedRegistrations])
+
+  useEffect(() => {
+    if (!registrationDeadline) {
+      setCountdown(null)
+      return undefined
+    }
+    setCountdown(calculateCountdown(registrationDeadline))
+    const timer = setInterval(() => {
+      setCountdown(calculateCountdown(registrationDeadline))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [registrationDeadline])
 
   const totalPages = Math.max(1, Math.ceil(filteredRegistrations.length / pageSize))
   const startIndex = (currentPage - 1) * pageSize
@@ -200,14 +226,6 @@ export default function AdminDashboard({ summary, registrations = [], loading, e
     const timestamp = new Date().toISOString().slice(0, 10)
     saveAs(blob, `exam-proctor-registrations-${timestamp}.xlsx`)
   }
-
-  useEffect(() => {
-    const update = () => setCountdown(calculateCountdown(registrationDeadline))
-    update()
-    const timer = setInterval(update, 60 * 1000)
-    return () => clearInterval(timer)
-  }, [registrationDeadline])
-
   return (
     <div className="space-y-6 font-sarabun">
       <header className="flex flex-col gap-4 rounded-2xl border border-indigo-100 bg-gradient-to-tr from-indigo-50 via-slate-50 to-white p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
@@ -324,7 +342,7 @@ export default function AdminDashboard({ summary, registrations = [], loading, e
                 <tr>
                   <th className="px-4 py-2 text-left">ลำดับ</th>
                   <th className="px-4 py-2 text-left">รหัสพนักงาน</th>
-                  <th className="px-4 py-2 text-left">คิว</th>
+                  <th className="px-4 py-2 text-left">ลำดับการลงทะเบียน</th>
                   <th className="px-4 py-2 text-left">ชื่อเต็ม</th>
                   <th className="px-4 py-2 text-left">ระดับการศึกษา</th>
                   <th className="px-4 py-2 text-left">สังกัด</th>

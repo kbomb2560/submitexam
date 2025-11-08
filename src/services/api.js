@@ -1,4 +1,4 @@
-import { composeFullName, deriveGenderFromPrefix } from '../utils/helpers.js'
+import { composeFullName, deriveGenderFromPrefix, normalizeRegistrationWindow } from '../utils/helpers.js'
 
 const LOGIN_API_URL = 'https://academic.pcru.ac.th/api-dev/submit-api/login_api.php'
 const REGISTRATION_API_URL = 'https://academic.pcru.ac.th/api-dev/submit-api/api/'
@@ -201,11 +201,20 @@ export async function fetchRegistrationDetail(empCode, { timeout = DEFAULT_TIMEO
   }
 }
 
-export async function fetchRegistrations({ timeout = DEFAULT_TIMEOUT_MS, userType, userRole, empCode } = {}) {
+export async function fetchRegistrations({
+  timeout = DEFAULT_TIMEOUT_MS,
+  userType,
+  userRole,
+  empCode,
+  limit = 1000,
+} = {}) {
   const { signal, cancel } = createAbortSignal(timeout)
 
   try {
-    const params = new URLSearchParams({ action: 'list', limit: '1000' })
+    const params = new URLSearchParams({ action: 'list' })
+    if (Number.isInteger(limit)) {
+      params.set('limit', String(limit))
+    }
     if (userType) params.set('user_type', userType)
     if (userRole) params.set('user_role', userRole)
     if (empCode) params.set('emp_code', empCode)
@@ -231,6 +240,66 @@ export async function fetchRegistrations({ timeout = DEFAULT_TIMEOUT_MS, userTyp
     return payload?.data ?? []
   } catch (error) {
     throw wrapNetworkError(error, 'ไม่สามารถดึงข้อมูลการลงทะเบียนได้')
+  } finally {
+    cancel()
+  }
+}
+
+export async function fetchRegistrationTotal({ timeout = DEFAULT_TIMEOUT_MS } = {}) {
+  const { signal, cancel } = createAbortSignal(timeout)
+
+  try {
+    const response = await fetch(`${REGISTRATION_API_URL}?action=public_total`, {
+      method: 'GET',
+      headers: defaultHeaders,
+      signal,
+    })
+
+    const payload = await response.json().catch(() => null)
+
+    if (!response.ok) {
+      throw new Error(payload?.message || 'ไม่สามารถดึงจำนวนผู้ลงทะเบียนได้')
+    }
+
+    const isSuccess = payload?.status ?? payload?.success ?? false
+
+    if (!isSuccess) {
+      throw new Error(payload?.message || 'ไม่สามารถดึงจำนวนผู้ลงทะเบียนได้')
+    }
+
+    return payload?.data ?? { total: 0 }
+  } catch (error) {
+    throw wrapNetworkError(error, 'ไม่สามารถดึงจำนวนผู้ลงทะเบียนได้')
+  } finally {
+    cancel()
+  }
+}
+
+export async function fetchRegistrationWindow({ timeout = DEFAULT_TIMEOUT_MS } = {}) {
+  const { signal, cancel } = createAbortSignal(timeout)
+
+  try {
+    const response = await fetch(`${REGISTRATION_API_URL}?action=window`, {
+      method: 'GET',
+      headers: defaultHeaders,
+      signal,
+    })
+
+    const payload = await response.json().catch(() => null)
+
+    if (!response.ok) {
+      throw new Error(payload?.message || 'ไม่สามารถดึงช่วงเวลาลงทะเบียนได้')
+    }
+
+    const isSuccess = payload?.status ?? payload?.success ?? false
+
+    if (!isSuccess) {
+      throw new Error(payload?.message || 'ไม่สามารถดึงช่วงเวลาลงทะเบียนได้')
+    }
+
+    return normalizeRegistrationWindow(payload?.data ?? null)
+  } catch (error) {
+    throw wrapNetworkError(error, 'ไม่สามารถดึงช่วงเวลาลงทะเบียนได้')
   } finally {
     cancel()
   }

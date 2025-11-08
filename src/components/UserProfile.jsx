@@ -1,16 +1,16 @@
 const fieldMapping = [
   { label: 'รหัสพนักงาน', key: 'EMP_CODE' },
   { label: 'ชื่อ-นามสกุล', key: 'FULL_NAME' },
-  { label: 'ชื่อภาษาอังกฤษ', key: 'FULL_NAME_ENG' },
+  // { label: 'ชื่อภาษาอังกฤษ', key: 'FULL_NAME_ENG' },
   { label: 'ตำแหน่ง', key: 'POSITION_NAME' },
   { label: 'วุฒิการศึกษา', key: 'LEVEL_NAME' },
-  { label: 'รหัสระดับการศึกษา', key: 'LEVEL_CODE' },
+  // { label: 'รหัสระดับการศึกษา', key: 'LEVEL_CODE' },
   { label: 'หน่วยงาน', key: 'SECTION_NAME' },
   { label: 'สังกัด', key: 'DEPARTMENT_NAME' },
-  { label: 'หมายเลขโทรศัพท์', key: 'PHONE' },
+  // { label: 'หมายเลขโทรศัพท์', key: 'PHONE' },
   { label: 'ประเภทบุคลากร (API)', key: 'USER_TYPE' },
   { label: 'บทบาทในระบบ', key: 'USER_ROLE' },
-  { label: 'เพศ (จากคำนำหน้า)', key: 'GENDER' },
+  // { label: 'เพศ (จากคำนำหน้า)', key: 'GENDER' },
 ]
 
 export default function UserProfile({ user }) {

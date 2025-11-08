@@ -24,8 +24,13 @@ $config = array(
     'api_key' => 'academic-pcru',
     'allow_origin' => '*',
     'exam_date' => '2568-12-07',
-    'admin_roles' => array('admin', 'administrator'),
-    'admin_emp_codes' => array('653004')
+    'admin_roles' => array('admin', 'administrator', 'ผู้ดูแลระบบ', 'ผู้ดูแล'),
+    'admin_emp_codes' => array('653004', '140014'),
+    'registration_window_default' => array(
+        'opens_at' => '2025-11-09 09:00:00',
+        'closes_at' => '2025-11-12 23:59:00',
+        'timezone' => 'Asia/Bangkok'
+    )
 );
 
 // -----------------------------------------------------------------------------
@@ -125,6 +130,199 @@ function is_admin_role($user_type, $admin_roles)
     return false;
 }
 
+function ensure_registration_window_table($mysqli, $config)
+{
+    $create_sql = 'CREATE TABLE IF NOT EXISTS exam_proctor_windows (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        opens_at DATETIME NOT NULL,
+        closes_at DATETIME NOT NULL,
+        timezone VARCHAR(64) NOT NULL DEFAULT "Asia/Bangkok",
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+
+    $mysqli->query($create_sql);
+
+    $check_sql = 'SELECT COUNT(*) AS total FROM exam_proctor_windows';
+    $result = $mysqli->query($check_sql);
+    if ($result) {
+        $row = $result->fetch_assoc();
+        $result->free();
+        if ((int) $row['total'] === 0) {
+            $default = isset($config['registration_window_default']) ? $config['registration_window_default'] : array();
+            $tz_name = isset($default['timezone']) ? $default['timezone'] : 'Asia/Bangkok';
+            $timezone = new DateTimeZone($tz_name);
+
+            $open_value = isset($default['opens_at']) ? $default['opens_at'] : 'now';
+            $close_value = isset($default['closes_at']) ? $default['closes_at'] : '+3 days';
+
+            $open_dt = parse_datetime_with_timezone($open_value, $timezone);
+            $close_dt = parse_datetime_with_timezone($close_value, $timezone);
+
+            if (!($open_dt instanceof DateTime)) {
+                $open_dt = new DateTime('now', $timezone);
+            }
+            if (!($close_dt instanceof DateTime)) {
+                $close_dt = new DateTime('+3 days', $timezone);
+            }
+
+            if ($close_dt <= $open_dt) {
+                $close_dt = clone $open_dt;
+                $close_dt->modify('+3 days');
+            }
+
+            $insert_stmt = $mysqli->prepare('INSERT INTO exam_proctor_windows (opens_at, closes_at, timezone) VALUES (?, ?, ?)');
+            if ($insert_stmt) {
+                $open_mysql = format_datetime_for_mysql($open_dt, $timezone);
+                $close_mysql = format_datetime_for_mysql($close_dt, $timezone);
+                $tz_string = $timezone->getName();
+                $insert_stmt->bind_param('sss', $open_mysql, $close_mysql, $tz_string);
+                $insert_stmt->execute();
+                $insert_stmt->close();
+            }
+        }
+    }
+}
+
+function parse_datetime_with_timezone($value, $timezone)
+{
+    if ($value instanceof DateTime) {
+        return clone $value;
+    }
+
+    if ($timezone instanceof DateTimeZone) {
+        $tz = $timezone;
+    } else {
+        $tz = new DateTimeZone((string) $timezone);
+    }
+
+    if (is_numeric($value)) {
+        $dt = new DateTime('@' . $value);
+        $dt->setTimezone($tz);
+        return $dt;
+    }
+
+    $text = trim((string) $value);
+    if ($text === '') {
+        return null;
+    }
+
+    $formats = array(
+        'Y-m-d H:i:s.u',
+        'Y-m-d H:i:s',
+        'Y-m-d\TH:i:s.uP',
+        'Y-m-d\TH:i:sP',
+        DateTime::ISO8601
+    );
+
+    foreach ($formats as $format) {
+        $dt = DateTime::createFromFormat($format, $text, $tz);
+        if ($dt instanceof DateTime) {
+            return $dt;
+        }
+    }
+
+    try {
+        $dt = new DateTime($text, $tz);
+        return $dt;
+    } catch (Exception $e) {
+        return null;
+    }
+}
+
+function format_datetime_for_mysql($value, $timezone)
+{
+    if (!($value instanceof DateTime)) {
+        $value = parse_datetime_with_timezone($value, $timezone);
+    }
+    if (!($value instanceof DateTime)) {
+        return null;
+    }
+    if (!($timezone instanceof DateTimeZone)) {
+        $timezone = new DateTimeZone((string) $timezone);
+    }
+    $dt = clone $value;
+    $dt->setTimezone($timezone);
+    return $dt->format('Y-m-d H:i:s');
+}
+
+function load_registration_window($mysqli, $config)
+{
+    ensure_registration_window_table($mysqli, $config);
+
+    $default = isset($config['registration_window_default']) ? $config['registration_window_default'] : array();
+    $tz_name = isset($default['timezone']) ? $default['timezone'] : 'Asia/Bangkok';
+    $timezone = new DateTimeZone($tz_name);
+    $open_dt = parse_datetime_with_timezone(isset($default['opens_at']) ? $default['opens_at'] : 'now', $timezone);
+    $close_dt = parse_datetime_with_timezone(isset($default['closes_at']) ? $default['closes_at'] : '+3 days', $timezone);
+    $source = 'default';
+
+    $sql = 'SELECT opens_at, closes_at, timezone FROM exam_proctor_windows ORDER BY id DESC LIMIT 1';
+    $result = $mysqli->query($sql);
+    if ($result) {
+        $row = $result->fetch_assoc();
+        $result->free();
+        if ($row) {
+            $tz_candidate = isset($row['timezone']) && $row['timezone'] !== '' ? $row['timezone'] : $tz_name;
+            $timezone = new DateTimeZone($tz_candidate);
+            $open_candidate = parse_datetime_with_timezone($row['opens_at'], $timezone);
+            $close_candidate = parse_datetime_with_timezone($row['closes_at'], $timezone);
+            if ($open_candidate instanceof DateTime) {
+                $open_dt = $open_candidate;
+            }
+            if ($close_candidate instanceof DateTime) {
+                $close_dt = $close_candidate;
+            }
+            $source = 'database';
+        }
+    }
+
+    if (!($open_dt instanceof DateTime)) {
+        $open_dt = new DateTime('now', $timezone);
+    }
+    if (!($close_dt instanceof DateTime)) {
+        $close_dt = clone $open_dt;
+        $close_dt->modify('+3 days');
+    }
+
+    if ($close_dt <= $open_dt) {
+        $close_dt = clone $open_dt;
+        $close_dt->modify('+3 days');
+    }
+
+    return array(
+        'open' => $open_dt,
+        'close' => $close_dt,
+        'timezone' => $timezone,
+        'source' => $source
+    );
+}
+
+function format_registration_window_response($window)
+{
+    $timezone = $window['timezone'];
+    if (!($timezone instanceof DateTimeZone)) {
+        $timezone = new DateTimeZone('Asia/Bangkok');
+    }
+    $now = new DateTime('now', $timezone);
+    $open_dt = $window['open'] instanceof DateTime ? clone $window['open'] : new DateTime('now', $timezone);
+    $close_dt = $window['close'] instanceof DateTime ? clone $window['close'] : new DateTime('+3 days', $timezone);
+
+    return array(
+        'opens_at' => $open_dt->format(DateTime::ATOM),
+        'closes_at' => $close_dt->format(DateTime::ATOM),
+        'open_timestamp' => $open_dt->getTimestamp(),
+        'close_timestamp' => $close_dt->getTimestamp(),
+        'timezone' => $timezone->getName(),
+        'server_time' => $now->format(DateTime::ATOM),
+        'server_timestamp' => $now->getTimestamp(),
+        'is_open' => ($now >= $open_dt) && ($now <= $close_dt),
+        'is_before_open' => $now < $open_dt,
+        'is_after_close' => $now > $close_dt,
+        'source' => $window['source']
+    );
+}
+
 // -----------------------------------------------------------------------------
 // Bootstrap
 // -----------------------------------------------------------------------------
@@ -170,13 +368,31 @@ function payload_value($json, $key, $default = '')
     return isset($_GET[$key]) ? $_GET[$key] : $default;
 }
 
+$registration_window = load_registration_window($mysqli, $config);
+
 // -----------------------------------------------------------------------------
 // Action handlers
 // -----------------------------------------------------------------------------
 
+if ($action === 'window') {
+    $window_payload = format_registration_window_response($registration_window);
+    send_json(true, 200, 'Registration window', $window_payload);
+}
+
 if ($action === 'register') {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
         send_json(false, 405, 'Method Not Allowed: use POST');
+    }
+
+    $timezone = $registration_window['timezone'];
+    $now_dt = new DateTime('now', $timezone);
+    $open_dt = clone $registration_window['open'];
+    $close_dt = clone $registration_window['close'];
+    if ($now_dt < $open_dt) {
+        send_json(false, 423, 'ระบบยังไม่เปิดให้ลงทะเบียน กรุณารอให้ถึงเวลาที่กำหนด');
+    }
+    if ($now_dt > $close_dt) {
+        send_json(false, 423, 'ระบบปิดรับลงทะเบียนแล้ว');
     }
 
     $emp_code = trim((string) payload_value($json_data, 'emp_code'));
@@ -427,6 +643,22 @@ if ($action === 'register') {
         'level_name' => $fields['level_name'],
         'level_code' => $fields['level_code'],
         'gender' => $gender
+    ));
+}
+
+if ($action === 'public_total') {
+    $count = 0;
+    $result = $mysqli->query('SELECT COUNT(*) AS total FROM exam_proctor_registrations');
+    if ($result) {
+        $row = $result->fetch_assoc();
+        if ($row && isset($row['total'])) {
+            $count = (int) $row['total'];
+        }
+        $result->free();
+    }
+
+    send_json(true, 200, 'Registration total fetched', array(
+        'total' => $count
     ));
 }
 

@@ -1,6 +1,11 @@
 export const EXAM_DATE_BUDDHIST = '2568-12-07'
-export const REGISTRATION_DEADLINE_BUDDHIST = '2568-11-12T23:59'
 export const SESSION_TIMEOUT_MS = 10 * 60 * 1000
+
+export const DEFAULT_REGISTRATION_WINDOW = {
+  opensAt: '2025-11-08T09:00:00+07:00',
+  closesAt: '2025-11-12T23:59:00+07:00',
+  timezone: 'Asia/Bangkok',
+}
 
 export function deriveGenderFromPrefix(prefix) {
   const text = (prefix || '').toString().trim()
@@ -48,15 +53,73 @@ export function getExamDate() {
   return new Date(Date.UTC(gregorianYear, buddhistMonth - 1, buddhistDay, 0, 0, 0, 0))
 }
 
-export function getRegistrationDeadline() {
-  const [datePart, timePart = '23:59'] = REGISTRATION_DEADLINE_BUDDHIST.split('T')
-  const [buddhistYear, buddhistMonth, buddhistDay] = datePart.split('-').map(Number)
-  if (!buddhistYear || !buddhistMonth || !buddhistDay) {
-    return new Date()
+function parseDateInput(value, fallback) {
+  if (!value && fallback) {
+    return new Date(fallback)
   }
-  const [hour = 23, minute = 59] = timePart.split(':').map(Number)
-  const gregorianYear = buddhistYear - 543
-  return new Date(gregorianYear, buddhistMonth - 1, buddhistDay, hour, minute, 0, 0)
+  if (!value) return new Date(fallback || Date.now())
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return new Date(fallback || Date.now())
+  }
+  return date
+}
+
+export function normalizeRegistrationWindow(raw) {
+  const fallback = DEFAULT_REGISTRATION_WINDOW
+  const opensAtIso =
+    (raw && (raw.opens_at || raw.opensAt)) || fallback.opensAt || new Date().toISOString()
+  const closesAtIso =
+    (raw && (raw.closes_at || raw.closesAt)) || fallback.closesAt || new Date().toISOString()
+
+  const timezone = (raw && (raw.timezone || raw.timeZone)) || fallback.timezone || 'Asia/Bangkok'
+  const opensAt = parseDateInput(opensAtIso, fallback.opensAt)
+  const closesAt = parseDateInput(closesAtIso, fallback.closesAt)
+  const serverTimeIso = raw && (raw.server_time || raw.serverTime)
+  const serverTime = parseDateInput(serverTimeIso, Date.now())
+
+  const normalizeTimestamp = (value, fallbackValue) => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value > 1_000_000_000_000 ? value : value * 1000
+    }
+    return fallbackValue
+  }
+
+  const serverTimestamp = normalizeTimestamp(raw?.server_timestamp, serverTime.getTime())
+  const openTimestamp = normalizeTimestamp(raw?.open_timestamp, opensAt.getTime())
+  const closeTimestamp = normalizeTimestamp(raw?.close_timestamp, closesAt.getTime())
+
+  const isOpen =
+    typeof raw?.is_open === 'boolean'
+      ? raw.is_open
+      : serverTimestamp >= openTimestamp && serverTimestamp <= closeTimestamp
+
+  const isBeforeOpen =
+    typeof raw?.is_before_open === 'boolean'
+      ? raw.is_before_open
+      : serverTimestamp < openTimestamp
+
+  const isAfterClose =
+    typeof raw?.is_after_close === 'boolean'
+      ? raw.is_after_close
+      : serverTimestamp > closeTimestamp
+
+  return {
+    opensAt,
+    closesAt,
+    opensAtIso: opensAtIso.toString(),
+    closesAtIso: closesAtIso.toString(),
+    serverTime,
+    serverTimeIso: serverTime.toISOString(),
+    timezone,
+    openTimestamp,
+    closeTimestamp,
+    serverTimestamp,
+    isOpen,
+    isBeforeOpen,
+    isAfterClose,
+    source: raw?.source || 'default',
+  }
 }
 
 export function calculateCountdown(targetDate, referenceDate = new Date()) {
@@ -71,12 +134,15 @@ export function calculateCountdown(targetDate, referenceDate = new Date()) {
   const hours = Math.floor(remaining / (1000 * 60 * 60))
   remaining -= hours * 1000 * 60 * 60
   const minutes = Math.floor(remaining / (1000 * 60))
+  remaining -= minutes * 1000 * 60
+  const seconds = Math.floor(remaining / 1000)
 
   return {
     totalMs,
     days,
     hours,
     minutes,
+    seconds,
   }
 }
 

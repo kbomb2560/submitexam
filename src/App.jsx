@@ -1,14 +1,25 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Clock } from 'lucide-react'
 import LoginForm from './components/LoginForm.jsx'
 import RegistrationForm from './components/RegistrationForm.jsx'
 import SuccessPage from './components/SuccessPage.jsx'
 import AdminDashboard from './components/AdminDashboard.jsx'
-import { fetchRegistrationDetail, fetchRegistrations, login, submitRegistration } from './services/api.js'
+import {
+  fetchRegistrationDetail,
+  fetchRegistrationTotal,
+  fetchRegistrationWindow,
+  fetchRegistrations,
+  login,
+  submitRegistration,
+} from './services/api.js'
 import {
   SESSION_TIMEOUT_MS,
   createRegistrationPayload,
   createRegistrationTimestamps,
   summarizeRegistrations,
+  calculateCountdown,
+  normalizeRegistrationWindow,
+  formatThaiDateTime,
 } from './utils/helpers.js'
 
 const initialState = {
@@ -38,11 +49,32 @@ function App() {
   const [isLoadingProfile, setIsLoadingProfile] = useState(false)
   const [profileError, setProfileError] = useState('')
   const [dashboardRegistrations, setDashboardRegistrations] = useState([])
+  const [now, setNow] = useState(Date.now())
+  const [registrationWindow, setRegistrationWindow] = useState(null)
+  const [isLoadingWindow, setIsLoadingWindow] = useState(true)
+  const [windowError, setWindowError] = useState('')
+  const [publicRegistrationTotal, setPublicRegistrationTotal] = useState(null)
+  const [publicRegistrationUpdatedAt, setPublicRegistrationUpdatedAt] = useState(null)
 
   const user = session?.user
   const userRoleValue = (user?.USER_ROLE || '').toString().toLowerCase()
   const registrationRoleValue = (registrationResult?.user_role || '').toString().toLowerCase()
   const isAdmin = userRoleValue === 'admin' || registrationRoleValue === 'admin'
+  const openTimestamp = registrationWindow?.openTimestamp ?? null
+  const closeTimestamp = registrationWindow?.closeTimestamp ?? null
+  const registrationOpenDate = registrationWindow?.opensAt ?? null
+  const registrationCloseDate = registrationWindow?.closesAt ?? null
+  const isBeforeOpen = registrationWindow ? now < openTimestamp : false
+  const isAfterClose = registrationWindow ? now > closeTimestamp : false
+  const openCountdown = useMemo(() => {
+    if (!registrationOpenDate) return null
+    return calculateCountdown(registrationOpenDate, new Date(now))
+  }, [registrationOpenDate, now])
+  const closeCountdown = useMemo(() => {
+    if (!registrationCloseDate) return null
+    return calculateCountdown(registrationCloseDate, new Date(now))
+  }, [registrationCloseDate, now])
+  const showClosedState = !isLoadingWindow && Boolean(registrationWindow) && (isBeforeOpen || isAfterClose)
 
   const loadDashboardSummary = useCallback(
     async (force = false, contextUser, contextRole) => {
@@ -162,13 +194,99 @@ function App() {
   }, [session, view, registrationResult, adminTab, persistState])
 
   useEffect(() => {
-    if (isAdmin && user && view !== 'admin') {
+    let cancelled = false
+    let timerId
+
+    const fetchTotal = async () => {
+      try {
+        const data = await fetchRegistrationTotal()
+        if (cancelled) return
+        const totalValue = data?.total
+        if (typeof totalValue === 'number' && Number.isFinite(totalValue)) {
+          setPublicRegistrationTotal(totalValue)
+        }
+        setPublicRegistrationUpdatedAt(Date.now())
+      } catch (error) {
+        if (cancelled) return
+        console.warn('ไม่สามารถดึงยอดรวมผู้ลงทะเบียนได้', error)
+      }
+    }
+
+    fetchTotal()
+    timerId = setInterval(fetchTotal, 10 * 1000)
+
+    return () => {
+      cancelled = true
+      clearInterval(timerId)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadWindow = async (showLoading = true) => {
+      if (showLoading) {
+        setIsLoadingWindow(true)
+      }
+      setWindowError('')
+      try {
+        const data = await fetchRegistrationWindow()
+        if (cancelled) return
+        setRegistrationWindow(data)
+      } catch (error) {
+        if (cancelled) return
+        setWindowError(error.message || 'ไม่สามารถดึงช่วงเวลาลงทะเบียนได้')
+        setRegistrationWindow(normalizeRegistrationWindow(null))
+      } finally {
+        if (!cancelled) {
+          setIsLoadingWindow(false)
+        }
+      }
+    }
+
+    loadWindow(true)
+    const interval = setInterval(() => {
+      loadWindow(false)
+    }, 5 * 60 * 1000)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now())
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!registrationWindow) return
+    if (isAdmin && user && view !== 'admin' && !isBeforeOpen && !isAfterClose) {
       setView('admin')
       setAdminTab((previous) => previous || 'profile')
     }
-  }, [isAdmin, user, view])
+  }, [isAdmin, user, view, isBeforeOpen, isAfterClose, registrationWindow])
 
   const handleLogin = async ({ username, password }) => {
+    if (isLoadingWindow) {
+      setLoginError('กำลังตรวจสอบช่วงเวลาลงทะเบียน กรุณารอสักครู่')
+      return
+    }
+    if (!registrationWindow) {
+      setLoginError('ไม่สามารถตรวจสอบช่วงเวลาลงทะเบียนได้')
+      return
+    }
+    if (isBeforeOpen) {
+      setLoginError('ระบบยังไม่เปิดให้ลงทะเบียน')
+      return
+    }
+    if (isAfterClose) {
+      setLoginError('ระบบปิดรับลงทะเบียนแล้ว')
+      return
+    }
     setIsLoggingIn(true)
     setLoginError('')
     setToastMessage('')
@@ -355,6 +473,18 @@ function App() {
     }
   }, [user?.EMP_CODE, registrationResult])
 
+  const formatCountdownText = (count) => {
+    if (!count || count.totalMs <= 0) return '0 วินาที'
+    const parts = []
+    if (count.days) parts.push(`${count.days.toLocaleString('th-TH')} วัน`)
+    if (count.hours) parts.push(`${count.hours.toString().padStart(2, '0')} ชม.`)
+    if (count.minutes || (!count.days && !count.hours)) {
+      parts.push(`${count.minutes.toString().padStart(2, '0')} นาที`)
+    }
+    parts.push(`${(count.seconds ?? 0).toString().padStart(2, '0')} วินาที`)
+    return parts.join(' ')
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-slate-100 font-sarabun">
       <header className="border-b border-slate-200 bg-white/90 backdrop-blur">
@@ -436,75 +566,149 @@ function App() {
           </div>
         ) : null}
 
-        {view === 'login' ? (
-          <LoginForm onSubmit={handleLogin} loading={isLoggingIn} error={loginError} message={toastMessage} />
-        ) : null}
+        {isLoadingWindow ? (
+          <div className="mx-auto w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+              <Clock className="h-9 w-9 animate-spin" />
+            </div>
+            <h2 className="text-xl font-semibold text-slate-900">กำลังโหลดข้อมูลช่วงเวลาลงทะเบียน</h2>
+            <p className="mt-3 text-sm text-slate-600">กรุณารอสักครู่ ระบบกำลังดึงข้อมูลจากฐานข้อมูลกลาง</p>
+          </div>
+        ) : showClosedState ? (
+          <div className="mx-auto w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+              <Clock className="h-9 w-9" />
+            </div>
+            <h2 className="text-2xl font-semibold text-slate-900">ระบบลงทะเบียนกรรมการคุมสอบ</h2>
+            {isBeforeOpen && registrationOpenDate ? (
+              <>
+                <p className="mt-3 text-sm text-slate-600">
+                  ระบบจะเปิดให้ลงทะเบียนในอีก {formatCountdownText(openCountdown)}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  เปิดให้ลงทะเบียนในวันที่ {formatThaiDateTime(registrationOpenDate)}
+                </p>
+              </>
+            ) : null}
+            {isAfterClose && registrationCloseDate ? (
+              <>
+                <p className="mt-3 text-sm text-slate-600">ระบบปิดรับลงทะเบียนแล้ว</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  ปิดรับลงทะเบียนเมื่อ {formatThaiDateTime(registrationCloseDate)}
+                </p>
+              </>
+            ) : null}
+            {windowError ? (
+              <p className="mt-4 text-xs text-rose-500">{windowError}</p>
+            ) : (
+              <p className="mt-4 text-xs text-slate-400">หากมีข้อสงสัย กรุณาติดต่อหน่วยงานทะเบียนและประมวลผล</p>
+            )}
+          </div>
+        ) : (
+          <>
+            {windowError ? (
+              <div className="mx-auto w-full max-w-2xl rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm text-amber-700 shadow-sm">
+                ไม่สามารถโหลดช่วงเวลาจากฐานข้อมูลได้ ระบบแสดงค่าตั้งต้น ({formatThaiDateTime(registrationOpenDate)} ถึง{' '}
+                {formatThaiDateTime(registrationCloseDate)})
+              </div>
+            ) : null}
 
-        {isAdmin && view === 'admin' ? (
-          <div className="space-y-6">
-            {adminTab === 'profile' ? (
+            {view === 'login' && publicRegistrationTotal !== null ? (
+              <div className="mx-auto w-full max-w-lg rounded-2xl border border-indigo-300 bg-white p-6 text-center shadow-lg">
+                <p className="text-xs uppercase tracking-wider text-indigo-500">จำนวนผู้ลงทะเบียนสะสม</p>
+                <p className="mt-2 text-5xl font-bold text-indigo-600">{publicRegistrationTotal.toLocaleString('th-TH')}</p>
+                {publicRegistrationUpdatedAt ? (
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    อัปเดตล่าสุด {formatThaiDateTime(publicRegistrationUpdatedAt)}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {view === 'login' ? (
+              <div className="space-y-4">
+                {registrationWindow && !isBeforeOpen && !isAfterClose ? (
+                  <div className="mx-auto w-full max-w-lg rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-center text-sm text-indigo-700 shadow-sm">
+                    <p className="font-semibold">ระบบจะปิดรับลงทะเบียนในอีก {formatCountdownText(closeCountdown)}</p>
+                    {registrationCloseDate ? (
+                      <p className="mt-1 text-xs text-indigo-600">
+                        ปิดรับลงทะเบียนวันที่ {formatThaiDateTime(registrationCloseDate)}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                <LoginForm onSubmit={handleLogin} loading={isLoggingIn} error={loginError} message={toastMessage} />
+              </div>
+            ) : null}
+
+            {isAdmin && view === 'admin' ? (
               <div className="space-y-6">
-                {isLoadingProfile ? (
-                  <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">
-                    กำลังดึงข้อมูลการลงทะเบียน...
+                {adminTab === 'profile' ? (
+                  <div className="space-y-6">
+                    {isLoadingProfile ? (
+                      <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">
+                        กำลังดึงข้อมูลการลงทะเบียน...
+                      </div>
+                    ) : null}
+                    {profileError ? (
+                      <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-center text-sm text-rose-600">
+                        {profileError}
+                      </div>
+                    ) : null}
+                    {registrationResult ? (
+                      <SuccessPage
+                        user={user}
+                        result={registrationResult}
+                        onLogout={() => handleLogout('success')}
+                        showBack={false}
+                        showLogout={false}
+                      />
+                    ) : !isLoadingProfile && !profileError ? (
+                      <RegistrationForm
+                        user={user}
+                        onSubmit={handleRegistrationSubmit}
+                        onLogout={() => handleLogout('success')}
+                        loading={isSubmitting}
+                        error={registrationError}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
-                {profileError ? (
-                  <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-center text-sm text-rose-600">
-                    {profileError}
-                  </div>
-                ) : null}
-                {registrationResult ? (
-                  <SuccessPage
-                    user={user}
-                    result={registrationResult}
-                    onLogout={() => handleLogout('success')}
-                    showBack={false}
-                    showLogout={false}
-                  />
-                ) : !isLoadingProfile && !profileError ? (
-                  <RegistrationForm
-                    user={user}
-                    onSubmit={handleRegistrationSubmit}
-                    onLogout={() => handleLogout('success')}
-                    loading={isSubmitting}
-                    error={registrationError}
+
+                {adminTab === 'dashboard' ? (
+                  <AdminDashboard
+                    summary={dashboardSummary}
+                    registrations={dashboardRegistrations}
+                    loading={isLoadingDashboard}
+                    error={dashboardError}
+                    onRefresh={() => loadDashboardSummary(true, user, registrationResult?.user_role || user?.USER_ROLE)}
+                    lastUpdated={dashboardUpdatedAt}
+                    registrationWindow={registrationWindow}
                   />
                 ) : null}
               </div>
             ) : null}
 
-            {adminTab === 'dashboard' ? (
-              <AdminDashboard
-                summary={dashboardSummary}
-                registrations={dashboardRegistrations}
-                loading={isLoadingDashboard}
-                error={dashboardError}
-                onRefresh={() => loadDashboardSummary(true, user, registrationResult?.user_role || user?.USER_ROLE)}
-                lastUpdated={dashboardUpdatedAt}
+            {!isAdmin && view === 'register' && user ? (
+              <RegistrationForm
+                user={user}
+                onSubmit={handleRegistrationSubmit}
+                onLogout={() => handleLogout('success')}
+                loading={isSubmitting}
+                error={registrationError}
               />
             ) : null}
-          </div>
-        ) : null}
 
-        {!isAdmin && view === 'register' && user ? (
-          <RegistrationForm
-            user={user}
-            onSubmit={handleRegistrationSubmit}
-            onLogout={() => handleLogout('success')}
-            loading={isSubmitting}
-            error={registrationError}
-          />
-        ) : null}
-
-        {!isAdmin && view === 'success' && user ? (
-          <SuccessPage
-            user={user}
-            result={registrationResult}
-            onLogout={() => handleLogout('success')}
-            showBack={false}
-          />
-        ) : null}
+            {!isAdmin && view === 'success' && user ? (
+              <SuccessPage
+                user={user}
+                result={registrationResult}
+                onLogout={() => handleLogout('success')}
+                showBack={false}
+              />
+            ) : null}
+          </>
+        )}
       </main>
 
       <footer className="border-t border-slate-200 bg-white/60">
