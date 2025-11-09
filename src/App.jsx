@@ -635,6 +635,9 @@ function App() {
                         ปิดรับลงทะเบียนวันที่ {formatThaiDateTime(registrationCloseDate)}
                       </p>
                     ) : null}
+                    <p className="mt-2 text-xs text-indigo-600">
+                      หรือมีคนสมัครเต็มแล้ว (300 คน สำรอง 10 คน)
+                    </p>
                   </div>
                 ) : null}
                 <LoginForm onSubmit={handleLogin} loading={isLoggingIn} error={loginError} message={toastMessage} />

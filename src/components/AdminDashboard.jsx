@@ -266,6 +266,7 @@ export default function AdminDashboard({
               <span>เหลือเวลา {countdownLabel}</span>
             </div>
             <p className="mt-1 text-[11px] text-indigo-600/80">ปิดรับลงทะเบียน: {formatThaiDateTime(registrationDeadline)}</p>
+            <p className="mt-1 text-[11px] text-indigo-600/80">หรือมีคนสมัครเต็มแล้ว (300 คน สำรอง 10 คน)</p>
           </div>
         </div>
 

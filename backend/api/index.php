@@ -26,6 +26,16 @@ $config = array(
     'exam_date' => '2568-12-07',
     'admin_roles' => array('admin', 'administrator', 'ผู้ดูแลระบบ', 'ผู้ดูแล'),
     'admin_emp_codes' => array('653004', '140014'),
+    'registration_capacity' => array(
+        'primary' => 300,
+        'reserve' => 10,
+        'total' => 310
+    ),
+    'registration_capacity' => array(
+        'primary' => 300,
+        'reserve' => 10,
+        'total' => 310
+    ),
     'registration_window_default' => array(
         'opens_at' => '2025-11-09 09:00:00',
         'closes_at' => '2025-11-12 23:59:00',
@@ -128,6 +138,37 @@ function is_admin_role($user_type, $admin_roles)
         }
     }
     return false;
+}
+
+function get_registration_capacity($config)
+{
+    if (isset($config['registration_capacity']) && is_array($config['registration_capacity'])) {
+        $capacity = $config['registration_capacity'];
+        $primary = isset($capacity['primary']) ? (int) $capacity['primary'] : 300;
+        $reserve = isset($capacity['reserve']) ? (int) $capacity['reserve'] : 10;
+        $total = isset($capacity['total']) ? (int) $capacity['total'] : ($primary + $reserve);
+        if ($total <= 0) {
+            $total = $primary + $reserve;
+        }
+        return array(
+            'primary' => $primary,
+            'reserve' => $reserve,
+            'total' => $total
+        );
+    }
+
+    $fallback_primary = isset($config['registration_capacity_primary']) ? (int) $config['registration_capacity_primary'] : 300;
+    $fallback_reserve = isset($config['registration_capacity_reserve']) ? (int) $config['registration_capacity_reserve'] : 10;
+    $fallback_total = isset($config['registration_capacity_total']) ? (int) $config['registration_capacity_total'] : ($fallback_primary + $fallback_reserve);
+    if ($fallback_total <= 0) {
+        $fallback_total = $fallback_primary + $fallback_reserve;
+    }
+
+    return array(
+        'primary' => $fallback_primary,
+        'reserve' => $fallback_reserve,
+        'total' => $fallback_total
+    );
 }
 
 function ensure_registration_window_table($mysqli, $config)
@@ -544,6 +585,20 @@ if ($action === 'register') {
     }
     $dup_stmt->close();
 
+    $capacity = get_registration_capacity($config);
+    $capacity_limit = isset($capacity['total']) ? (int) $capacity['total'] : 0;
+    if ($capacity_limit > 0) {
+        $capacity_sql = "SELECT COUNT(*) AS total FROM exam_proctor_registrations WHERE user_role IS NULL OR user_role <> 'admin'";
+        $capacity_result = $mysqli->query($capacity_sql);
+        if ($capacity_result) {
+            $capacity_row = $capacity_result->fetch_assoc();
+            $capacity_result->free();
+            if ($capacity_row && isset($capacity_row['total']) && (int) $capacity_row['total'] >= $capacity_limit) {
+                send_json(false, 423, 'ระบบปิดรับลงทะเบียนแล้วเนื่องจากมีผู้สมัครครบจำนวนที่กำหนด');
+            }
+        }
+    }
+
     $mysqli->autocommit(false);
 
     $insert_sql = 'INSERT INTO exam_proctor_registrations (
@@ -657,8 +712,14 @@ if ($action === 'public_total') {
         $result->free();
     }
 
+    $capacity = get_registration_capacity($config);
+    $capacity_total = isset($capacity['total']) ? (int) $capacity['total'] : 0;
+    $is_full = $capacity_total > 0 && $count >= $capacity_total;
+
     send_json(true, 200, 'Registration total fetched', array(
-        'total' => $count
+        'total' => $count,
+        'capacity' => $capacity,
+        'is_full' => $is_full
     ));
 }
 
