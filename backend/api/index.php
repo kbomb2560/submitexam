@@ -648,7 +648,7 @@ if ($action === 'register') {
 
 if ($action === 'public_total') {
     $count = 0;
-    $result = $mysqli->query('SELECT COUNT(*) AS total FROM exam_proctor_registrations');
+    $result = $mysqli->query("SELECT COUNT(*) AS total FROM exam_proctor_registrations WHERE user_role IS NULL OR user_role <> 'admin'");
     if ($result) {
         $row = $result->fetch_assoc();
         if ($row && isset($row['total'])) {
@@ -722,7 +722,7 @@ if ($action === 'stats') {
         'by_gender' => array()
     );
 
-    $count_result = $mysqli->query('SELECT COUNT(*) AS total FROM exam_proctor_registrations');
+    $count_result = $mysqli->query("SELECT COUNT(*) AS total FROM exam_proctor_registrations WHERE user_role IS NULL OR user_role <> 'admin'");
     if ($count_result) {
         $row = $count_result->fetch_assoc();
         $stats['total'] = isset($row['total']) ? (int) $row['total'] : 0;
