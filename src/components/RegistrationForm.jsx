@@ -89,6 +89,9 @@ export default function RegistrationForm({ user, onSubmit, onLogout, loading, er
               <p>
                 วันที่ 7 ธันวาคม 2568 เวลา 07:00 - 16:00 น. · เบี้ยเลี้ยงปฏิบัติหน้าที่ 1,000.- บาท + ค่าเครื่องดื่ม 40.- บาท
               </p>
+              <p className="text-xm uppercase tracking-wider text-emerald-600 underline font-bold">
+              ศูนย์สอบมหาวิทยาลัยนเรศวร	 · สนามสอบมหาวิทยาลัยราชภัฎเพชรบูรณ์ จังหวัดเพชรบูรณ์	
+              </p>
             </div>
           </li>
         </ol>

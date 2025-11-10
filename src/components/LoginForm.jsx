@@ -27,7 +27,7 @@ export default function LoginForm({ onSubmit, loading, error, message }) {
           PCRU
         </div>
         <h1 className="mt-4 text-2xl font-semibold text-slate-900">ระบบลงทะเบียนกรรมการคุมสอบ</h1>
-        <p className="mt-2 text-sm text-slate-500">กรุณาเข้าสู่ระบบด้วยรหัสพนักงานของท่าน</p>
+        <p className="mt-2 text-sm text-slate-500">กรุณาเข้าสู่ระบบด้วยรหัสพนักงานของท่าน (ระบบ PMIS)</p>
         {message ? <p className="mt-3 text-sm font-medium text-amber-600">{message}</p> : null}
       </div>
 

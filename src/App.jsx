@@ -601,7 +601,7 @@ function App() {
             {windowError ? (
               <p className="mt-4 text-xs text-rose-500">{windowError}</p>
             ) : (
-              <p className="mt-4 text-xs text-slate-400">หากมีข้อสงสัย กรุณาติดต่อหน่วยงานทะเบียนและประมวลผล</p>
+              <p className="mt-4 text-xs text-slate-400">หากมีข้อสงสัย กรุณาติดต่อหน่วยงานทะเบียนและประมวลผล </p>
             )}
           </div>
         ) : (
@@ -716,7 +716,7 @@ function App() {
 
       <footer className="border-t border-slate-200 bg-white/60">
         <div className="mx-auto flex w-full max-w-5xl flex-col items-center justify-between gap-2 px-4 py-4 text-center text-xs text-slate-400 sm:flex-row">
-          <p>© {new Date().getFullYear()} Phetchabun Rajabhat University · งานทะเบียนและประมวลผล (โดย นายขวัญชัย แก่นไทย)</p>
+          <p>© {new Date().getFullYear()} Phetchabun Rajabhat University · งานทะเบียนและประมวลผล (โดย นายขวัญชัย แก่นไทย) ext. 6012</p>
           <p>รองรับการใช้งานบนอุปกรณ์พกพาและเดสก์ท็อป</p>
         </div>
       </footer>
